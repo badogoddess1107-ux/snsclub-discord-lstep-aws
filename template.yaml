@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SnsClub Discord x Lステップ 連携（お客様向けフロー / サーバーレス）
+
+Parameters:
+  Stage: { Type: String, Default: prod }
+  # 公開URL（デプロイ後に確定する /exec URL。初回はダミー→URL確定後に再デプロイ＋Discord登録）
+  WebAppUrl: { Type: String, Default: 'https://example.com/exec' }
+  # 機密（NoEcho）。sam deploy --parameter-overrides もしくは samconfig で渡す
+  DiscordClientId: { Type: String }
+  DiscordClientSecret: { Type: String, NoEcho: true }
+  DiscordBotToken: { Type: String, NoEcho: true }
+  LstepApiToken: { Type: String, NoEcho: true }
+  LstepWebhookSnsclub: { Type: String, NoEcho: true }
+  LstepWebhookClasschat: { Type: String, NoEcho: true }
+  DiscordAlertWebhookUrl: { Type: String, NoEcho: true }
+  DiscordAlertThreadId: { Type: String, Default: '1513809205843202100' }
+  DiscordAlertMentionId: { Type: String, Default: '1473604738829389875' }
+  WritebackToken: { Type: String, NoEcho: true }
+  # 40333対策（AWSのIPで直接叩けるなら空のままでOK）
+  DiscordProxyUrl: { Type: String, Default: '' }
+  DiscordProxySecret: { Type: String, NoEcho: true, Default: '' }
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 29
+    MemorySize: 512
+    Architectures: [arm64]
+    CodeUri: ./
+    Environment:
+      Variables:
+        MAPPING_TABLE: !Ref MappingTable
+        FRIEND_CACHE_BUCKET: !Ref FriendCacheBucket
+        WEB_APP_URL: !Ref WebAppUrl
+        DISCORD_CLIENT_ID: !Ref DiscordClientId
+        DISCORD_CLIENT_SECRET: !Ref DiscordClientSecret
+        DISCORD_BOT_TOKEN: !Ref DiscordBotToken
+        LSTEP_API_TOKEN: !Ref LstepApiToken
+        LSTEP_WEBHOOK_URL_SNSCLUB: !Ref LstepWebhookSnsclub
+        LSTEP_WEBHOOK_URL_CLASSCHAT: !Ref LstepWebhookClasschat
+        DISCORD_ALERT_WEBHOOK_URL: !Ref DiscordAlertWebhookUrl
+        DISCORD_ALERT_THREAD_ID: !Ref DiscordAlertThreadId
+        DISCORD_ALERT_MENTION_ID: !Ref DiscordAlertMentionId
+        WRITEBACK_TOKEN: !Ref WritebackToken
+        DISCORD_PROXY_URL: !Ref DiscordProxyUrl
+        DISCORD_PROXY_SECRET: !Ref DiscordProxySecret
+
+Resources:
+  MappingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: discord_user_id, AttributeType: S }
+        - { AttributeName: step, AttributeType: S }
+        - { AttributeName: match_status, AttributeType: S }
+      KeySchema:
+        - { AttributeName: discord_user_id, KeyType: HASH }
+        - { AttributeName: step, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: by-status
+          KeySchema:
+            - { AttributeName: match_status, KeyType: HASH }
+            - { AttributeName: discord_user_id, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  # Lステップ友だち一覧キャッシュ（〜1MB超のためS3）
+  FriendCacheBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-cache
+            Status: Enabled
+            ExpirationInDays: 1
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+
+  MatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/match.handler
+      Timeout: 120
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref MappingTable }
+        - S3CrudPolicy: { BucketName: !Ref FriendCacheBucket }
+
+  ExecFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/exec.handler
+      Environment:
+        Variables:
+          MATCH_FUNCTION_NAME: !Ref MatchFunction
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref MappingTable }
+        - S3CrudPolicy: { BucketName: !Ref FriendCacheBucket }
+        - LambdaInvokePolicy: { FunctionName: !Ref MatchFunction }
+      Events:
+        Exec:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /exec, Method: GET }
+
+  WritebackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/writeback.handler
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref MappingTable }
+      Events:
+        Writeback:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /writeback, Method: GET }
+
+Outputs:
+  ApiBaseUrl:
+    Description: 公開ベースURL。/exec をLステップ配信URL・Discordリダイレクト・WebAppUrlに、/writeback を書き戻しmap-urlに使う
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
