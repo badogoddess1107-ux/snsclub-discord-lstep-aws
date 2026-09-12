@@ -13,7 +13,7 @@ Parameters:
   LstepApiToken: { Type: String, NoEcho: true }
   LstepWebhookSnsclub: { Type: String, NoEcho: true }
   LstepWebhookClasschat: { Type: String, NoEcho: true }
-  DiscordAlertWebhookUrl: { Type: String, NoEcho: true }
+  DiscordAlertWebhookUrl: { Type: String, NoEcho: true, Default: '' }  # 未設定でもデプロイ可（空だと手動対応アラートは飛ばない）
   DiscordAlertThreadId: { Type: String, Default: '1513809205843202100' }
   DiscordAlertMentionId: { Type: String, Default: '1473604738829389875' }
   WritebackToken: { Type: String, NoEcho: true }
@@ -23,7 +23,7 @@ Parameters:
 
 Globals:
   Function:
-    Runtime: nodejs20.x
+    Runtime: nodejs22.x
     Timeout: 29
     MemorySize: 512
     Architectures: [arm64]

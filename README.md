@@ -14,7 +14,7 @@ SnsClub Discord × Lステップ 連携の**お客様向けフロー**を、GAS 
 API Gateway (HTTP API, 固定の公開HTTPS URL)
    │
    ▼
-Lambda (Node.js 20)
+Lambda (Node.js 22)
    ├ exec        : uid/step受信 → Discord OAuthへリダイレクト
    ├ callback    : code受領 → token交換 → guilds.join(入室) → DynamoDB保存
    │               → 「即マッチ」を非同期起動 → 完了画面を即返す
