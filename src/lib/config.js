@@ -3,6 +3,7 @@ export const CONFIG = {
   // 公開してよい定数
   DISCORD_GUILD_ID_SNSCLUB: '1151442122361282641',
   DISCORD_GUILD_ID_CLASSCHAT: '1475397327773499392',
+  DISCORD_GUILD_ID_CLASSCHAT3: '1541810468060925984',
   DISCORD_OAUTH_AUTHORIZE_URL: 'https://discord.com/api/oauth2/authorize',
   DISCORD_OAUTH_TOKEN_URL: 'https://discord.com/api/oauth2/token',
   DISCORD_API_BASE: 'https://discord.com/api/v10',
@@ -10,6 +11,7 @@ export const CONFIG = {
   LSTEP_API_BASE_URL: 'https://api.lineml.jp/v2/api',
   STEP_SNSCLUB: '1',
   STEP_CLASSCHAT: '2',
+  STEP_CLASSCHAT3: '3',
 
   // 機密・環境依存（環境変数）
   clientId: process.env.DISCORD_CLIENT_ID,
@@ -33,11 +35,20 @@ export const CONFIG = {
 };
 
 export function guildIdForStep(step) {
-  return String(step) === CONFIG.STEP_SNSCLUB ? CONFIG.DISCORD_GUILD_ID_SNSCLUB : CONFIG.DISCORD_GUILD_ID_CLASSCHAT;
+  const s = String(step);
+  if (s === CONFIG.STEP_SNSCLUB) return CONFIG.DISCORD_GUILD_ID_SNSCLUB;
+  if (s === CONFIG.STEP_CLASSCHAT3) return CONFIG.DISCORD_GUILD_ID_CLASSCHAT3;
+  return CONFIG.DISCORD_GUILD_ID_CLASSCHAT;
 }
 export function serverNameForStep(step) {
-  return String(step) === CONFIG.STEP_SNSCLUB ? 'SnsClub運営/お知らせ' : 'SnsClubクラスチャットⅡ';
+  const s = String(step);
+  if (s === CONFIG.STEP_SNSCLUB) return 'SnsClub運営/お知らせ';
+  if (s === CONFIG.STEP_CLASSCHAT3) return 'SnsClubクラスチャットⅢ';
+  return 'SnsClubクラスチャットⅡ';
 }
 export function serverLabelForStep(step) {
-  return String(step) === CONFIG.STEP_SNSCLUB ? 'SnsClubサーバー' : 'SnsClub クラスチャットⅡ';
+  const s = String(step);
+  if (s === CONFIG.STEP_SNSCLUB) return 'SnsClubサーバー';
+  if (s === CONFIG.STEP_CLASSCHAT3) return 'SnsClub クラスチャットⅢ';
+  return 'SnsClub クラスチャットⅡ';
 }

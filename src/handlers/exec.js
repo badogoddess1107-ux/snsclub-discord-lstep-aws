@@ -29,7 +29,7 @@ export async function handler(event) {
 // 初回アクセス：step が正しければ OAuth へ（uid/mid は空でも可＝入室はブロックしない）
 async function handleInitial(q) {
   const step = String(q.step);
-  if (step !== CONFIG.STEP_SNSCLUB && step !== CONFIG.STEP_CLASSCHAT) {
+  if (step !== CONFIG.STEP_SNSCLUB && step !== CONFIG.STEP_CLASSCHAT && step !== CONFIG.STEP_CLASSCHAT3) {
     return html(200, errorHtml(`ステップ指定が不正です（step=${step}）`));
   }
   const stateObj = { uid: q.uid || '', mid: q.mid || '', step, nonce: randomUUID(), ts: Date.now() };
