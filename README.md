@@ -3,8 +3,8 @@
 SnsClub Discord × Lステップ 連携の**お客様向けフロー**を、GAS から **AWSサーバーレス**へ移行したもの。
 低レイテンシ・自動スケール・管理最小化が目的。
 
-> **書き戻し（DiscordID→Lステップ）は移行対象外**。従来の `lstep-discord-writeback/`
-> （launchd 22時・Playwright）をそのまま維持し、データ取得先URLだけ本AWSに差し替える。
+> **書き戻し（DiscordID→Lステップ）も本スタックに統合済み**（`writeback-batch/`、毎日22時JST・Lambda）。
+> 従来の `lstep-discord-writeback/`（Mac・launchd）は不要になる。詳細は「書き戻しバッチ」の節を参照。
 
 ## 構成（サーバーレス）
 ```
@@ -72,7 +72,7 @@ sam deploy --guided \
 ## 移行時に必要な切り替え（cutover）
 1. **Discord Developer Portal** のリダイレクトURIを、新しい API Gateway の `/callback` に変更
 2. **Lステップ配信URL** を、GASの `/exec` から 新しい API Gateway の `/exec` に変更
-3. **書き戻しの `.env`** の `WRITEBACK_MAP_URL` を 新しい `/writeback` に変更
+3. 書き戻しは本スタックの `writeback-batch/` に統合済み（「書き戻しバッチ」の節の cutover 手順で Mac 側を停止）
 4. 動作確認後、GAS側は停止（トリガー削除・デプロイ無効化）
 
 ## 実装状況
@@ -82,11 +82,106 @@ sam deploy --guided \
 - [x] writeback API（?token= でCSV返却）
 - [x] Lステップ友だちキャッシュ（S3・TTL10分）
 - [x] 純粋関数テスト（normalizeName / cleanIdentifier）
+- [x] 書き戻しバッチ（writeback-batch: Lambda + Scheduler + S3。実Lステップで DRY RUN 通し検証済み）
 - [ ] （御社作業）AWSデプロイ・cutover・動作検証
 
 ## ファイル構成
 ```
 src/lib/     config, discord, lstep, cache(S3), matching, names(純粋), dynamo, alert, html
 src/handlers exec, match, writeback
-template.yaml  SAM（API Gateway + Lambda×3 + DynamoDB + S3）
+writeback-batch/  書き戻しバッチ（下記）。依存が大きいため CodeUri を分離
+template.yaml  SAM（API Gateway + Lambda×4 + DynamoDB + S3×2 + Scheduler）
 ```
+
+---
+
+## 書き戻しバッチ（DiscordID→Lステップ）— `writeback-batch/`
+
+Mac の launchd で動かしていた `lstep-discord-writeback/` を Lambda 化したもの。
+**田畑のPCが無くても毎日22時(JST)に自動で動く。**
+
+### 仕組み
+```
+EventBridge Scheduler (22:00 JST)
+   │
+   ▼
+Lambda WritebackBatchFunction (x86_64 / 2GB / 最大15分)
+   ├ S3 session/storageState.json からログインセッションを復元
+   ├ ヘッドレスChromium(@sparticuz/chromium + playwright-core) で Lステップ管理画面を操作
+   │    友だちリスト → CSVエクスポート(DiscordID列) → 生成待ち → ダウンロード
+   ├ 自スタックの /writeback?token= から「管理ID,DiscordID」を取得し、空欄だけ埋める
+   ├ CSVインポート → 「このデータを反映する」
+   ├ 成果物を S3 runs/<実行ID>/ に保存（export.csv / merged.csv / スクショ / summary.json）
+   └ Discord のアラートスレッドに結果を通知
+```
+- **人が関与するのはログイン（画像認証）だけ。** Lステップの CAPTCHA は自動化しない（できない）。
+- ログインユーザーは複数アカウント（SnsClub運営 / 勉強会 など）を持ち、ログイン直後の既定が目的と違うことがある。
+  そのため毎回ヘッダーを確認し、違えば「**SnsClub運営に切り替え**」を自動で押す（`LstepAccountName` パラメータ）。
+- セッションが切れると Lambda は `needs_login` で終了し、Discord に担当者メンション付きで通知する。
+  担当者が下記「セッション更新」を行えば翌日から自動再開する。
+- 安全設計は旧実装と同じ: **空欄の DiscordID だけ埋める／既存値は絶対に上書きしない／メタ行・見出し行は不変**。
+  加えて、埋める行が0件ならインポート自体をスキップする（無意味な全件更新を避ける）。
+- Scheduler のリトライは 0 回（二重インポート防止）。失敗は翌日に再実行される。
+
+### デプロイ（担当者）
+既存の `sam build && sam deploy` に含まれる。追加で必要なものは無い（パラメータは既定値で可）。
+```bash
+cd aws-discord-lstep
+sam build && sam deploy
+```
+出力に以下が増える:
+- `WritebackBucketName` … セッション・成果物のバケット（次の「セッション更新」で使う）
+- `WritebackBatchFunctionName` … 手動実行に使う Lambda 名
+
+> 初回検証は DRY RUN 推奨: `sam deploy --parameter-overrides WritebackDryRun=1 ...` でデプロイすると、
+> インポートせず merged.csv を作るところまでで止まる。S3 の `runs/<実行ID>/merged.csv` を確認して
+> 問題なければ `WritebackDryRun=0` で再デプロイ。
+
+### セッション更新（初回・セッション切れ時。担当者の手元PCで）
+Lステップにログインしたブラウザのセッションを S3 に保存する。パスワードはブラウザで人が打つだけで、
+スクリプトもS3も扱わない。
+```bash
+cd aws-discord-lstep/writeback-batch
+npm install
+npx playwright install chromium        # 初回のみ
+npm run session:login -- --bucket <WritebackBucketName>
+```
+→ ブラウザが開くので Lステップにログイン（画像認証を解く）→ 自動で保存されて終了。
+AWS 認証情報（`aws configure` 済み or 環境変数）が必要。
+
+### 手動実行・確認
+```bash
+# すぐ動かして確認（DRY RUN。インポートしない）
+aws lambda invoke --function-name <WritebackBatchFunctionName> \
+  --cli-binary-format raw-in-base64-out --payload '{"dryRun":true}' out.json && cat out.json
+
+# 本番反映まで
+aws lambda invoke --function-name <WritebackBatchFunctionName> --payload '{}' out.json
+```
+- 直近の結果: S3 `runs/latest.json`。各実行の詳細: `runs/<実行ID>/summary.json`
+- 失敗時のスクショ: `runs/<実行ID>/*.png`（ログは CloudWatch Logs にも出る）
+
+### ローカルで動作確認（デプロイ前）
+```bash
+cd aws-discord-lstep/writeback-batch
+npm install && npx playwright install chromium
+npm run session:login -- --local ./.local-storage          # ブラウザでログイン
+WRITEBACK_LOCAL_DIR=./.local-storage \
+WRITEBACK_MAP_URL='<ApiBaseUrl>/writeback?token=<WritebackToken>' \
+npm run run:local                                           # DRY RUN（--import で本番反映）
+```
+
+### 切り替え（cutover）
+1. デプロイ → セッション更新 → DRY RUN で `merged.csv` を確認
+2. `WritebackDryRun=0` で再デプロイ（または既定のまま）
+3. **Mac 側の launchd を停止**（二重実行防止）:
+   `launchctl bootout gui/$(id -u)/com.snsclub.discord-writeback && rm ~/Library/LaunchAgents/com.snsclub.discord-writeback.plist`
+4. 翌日22時以降、Discord のアラートスレッドに「✅ DiscordID書き戻し（AWS）完了」が届けば移行完了
+
+### 制約・注意
+- `@sparticuz/chromium`（143）と `playwright-core`（1.57）は **Chromium のメジャーバージョンを揃えて**ある。
+  片方だけ上げると起動しなくなるので、更新時は両方を対応する組み合わせにする。
+- Lambda は x86_64（`@sparticuz/chromium` が arm64 未対応のため）。他の関数は arm64 のまま。
+- Lステップの画面構成が変わると操作が失敗する。その場合は `runs/<実行ID>/*.png` を見てセレクタを直す
+  （`src/lstepFlow.js`。旧 `automate.js` と同じ手順・セレクタ）。
+  実例: 2026/09 に「友だち情報名を入力」→「友だち情報欄名を入力」へ変わり旧実装が止まった（本実装は両方に対応済み）。

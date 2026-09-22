@@ -1,0 +1,21 @@
+{
+  "name": "writeback-batch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DiscordID→Lステップ書き戻しバッチ（Lambda / Playwright）。lstep-discord-writeback のAWS版",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "session:login": "node scripts/session-login.js",
+    "run:local": "node scripts/run-local.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@sparticuz/chromium": "143.0.4",
+    "iconv-lite": "^0.7.3",
+    "playwright-core": "~1.57.0"
+  },
+  "devDependencies": {
+    "playwright": "~1.57.0"
+  }
+}

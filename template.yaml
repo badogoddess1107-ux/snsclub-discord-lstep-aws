@@ -23,6 +23,11 @@ Parameters:
   # 40333対策（AWSのIPで直接叩けるなら空のままでOK）
   DiscordProxyUrl: { Type: String, Default: '' }
   DiscordProxySecret: { Type: String, NoEcho: true, Default: '' }
+  # 書き戻しバッチ（DiscordID→Lステップ）。'1' にすると常にDRY RUN（インポートしない。初回検証用）
+  WritebackDryRun: { Type: String, Default: '0', AllowedValues: ['0', '1'] }
+  LstepLoginUrl: { Type: String, Default: 'https://manager.linestep.net/' }
+  # 操作対象のLステップアカウント名。ログインユーザーが複数アカウントを持つため、違えば自動で切り替える
+  LstepAccountName: { Type: String, Default: 'SnsClub運営' }
 
 Globals:
   Function:
@@ -121,7 +126,65 @@ Resources:
           Type: HttpApi
           Properties: { ApiId: !Ref HttpApi, Path: /writeback, Method: GET }
 
+  # ============================================================
+  # 書き戻しバッチ（DiscordID→Lステップ）: 旧 lstep-discord-writeback/（Mac・launchd 22時）のAWS版
+  #   毎日22時(JST)に Lambda 内のヘッドレス Chromium で Lステップ管理画面を操作し、
+  #   export → DiscordID充填 → import を行う。Macは不要。
+  #   人が関与するのはログイン(CAPTCHA)のみ: セッション切れは Discord に通知され、
+  #   担当者が writeback-batch/scripts/session-login.js でセッションを保存し直す。
+  # ============================================================
+  WritebackBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-run-artifacts   # 実行ごとのCSV/スクショは90日で消す（session/ は残す）
+            Status: Enabled
+            Prefix: runs/
+            ExpirationInDays: 90
+
+  WritebackBatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: writeback-batch/       # 依存(Chromium ~60MB)が大きいので他の関数と分離
+      Handler: src/handler.handler
+      Architectures: [x86_64]         # @sparticuz/chromium は x86_64 のみ対応
+      MemorySize: 2048
+      Timeout: 900
+      EphemeralStorage: { Size: 1024 } # Chromium展開 + CSV
+      Environment:
+        Variables:
+          WRITEBACK_BUCKET: !Ref WritebackBucket
+          WRITEBACK_MAP_URL: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/writeback?token=${WritebackToken}"
+          WRITEBACK_DRY_RUN: !Ref WritebackDryRun
+          LSTEP_LOGIN_URL: !Ref LstepLoginUrl
+          LSTEP_ACCOUNT_NAME: !Ref LstepAccountName
+      Policies:
+        - S3CrudPolicy: { BucketName: !Ref WritebackBucket }
+      Events:
+        Nightly:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 22 * * ? *)
+            ScheduleExpressionTimezone: Asia/Tokyo
+            Description: DiscordID→Lステップ書き戻し（毎日22時JST）
+            RetryPolicy: { MaximumRetryAttempts: 0 }   # 二重インポート防止。失敗は翌日再実行
+
 Outputs:
   ApiBaseUrl:
     Description: 公開ベースURL。/exec をLステップ配信URL・Discordリダイレクト・WebAppUrlに、/writeback を書き戻しmap-urlに使う
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+  WritebackBucketName:
+    Description: 書き戻しバッチのセッション・成果物バケット。session-login.js の --bucket に指定する
+    Value: !Ref WritebackBucket
+  WritebackBatchFunctionName:
+    Description: 書き戻しバッチのLambda名。手動実行は aws lambda invoke --function-name <これ> --payload '{"dryRun":true}'
+    Value: !Ref WritebackBatchFunction
