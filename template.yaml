@@ -17,6 +17,9 @@ Parameters:
   DiscordAlertThreadId: { Type: String, Default: '1513809205843202100' }
   DiscordAlertMentionId: { Type: String, Default: '1473604738829389875' }
   WritebackToken: { Type: String, NoEcho: true }
+  # 旧GASスプシへの即時ミラー（受信専用GAS Web App）。空ならミラー送信しない。
+  SheetSinkUrl: { Type: String, Default: '' }
+  SheetSinkToken: { Type: String, NoEcho: true, Default: '' }
   # 40333対策（AWSのIPで直接叩けるなら空のままでOK）
   DiscordProxyUrl: { Type: String, Default: '' }
   DiscordProxySecret: { Type: String, NoEcho: true, Default: '' }
@@ -43,6 +46,8 @@ Globals:
         DISCORD_ALERT_THREAD_ID: !Ref DiscordAlertThreadId
         DISCORD_ALERT_MENTION_ID: !Ref DiscordAlertMentionId
         WRITEBACK_TOKEN: !Ref WritebackToken
+        SHEET_SINK_URL: !Ref SheetSinkUrl
+        SHEET_SINK_TOKEN: !Ref SheetSinkToken
         DISCORD_PROXY_URL: !Ref DiscordProxyUrl
         DISCORD_PROXY_SECRET: !Ref DiscordProxySecret
 

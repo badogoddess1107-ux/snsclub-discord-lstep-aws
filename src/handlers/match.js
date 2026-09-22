@@ -4,6 +4,7 @@ import { findByAnyIdentifier, findByDiscordName, normalizeName } from '../lib/ma
 import { setNickname } from '../lib/discord.js';
 import { notifyLstepWebhook } from '../lib/lstep.js';
 import { notifyManualAlert } from '../lib/alert.js';
+import { pushToSheet } from '../lib/sink.js';
 
 /**
  * 本人特定 → 改名 → タグ付与（次配信）/ 曖昧・未マッチ通知。
@@ -85,5 +86,28 @@ export async function handler(event) {
       matchStatus, matchResult,
     );
   }
+  // 旧GASスプシへ即時ミラー（読み取り用。失敗しても本処理に影響させない）
+  try {
+    const sink = await pushToSheet({
+      lstep_uid: effectiveUid || '',
+      lstep_manage_id: matchResult.manage_id || row.lstep_manage_id || '',
+      lstep_line_name: matchResult.line_name || '',
+      lstep_real_name: matchResult.real_name || '',
+      lstep_display_name: systemName || '',
+      discord_user_id: discordUserId,
+      discord_username: row.discord_username || '',
+      discord_display_name: newDiscordName || '',
+      discord_server: row.discord_server || '',
+      step,
+      match_status: matchStatus,
+      match_confidence: matchConfidence,
+      created_at: row.created_at || '',
+      updated_at: new Date().toISOString(),
+    });
+    if (!sink.ok && !sink.skipped) console.error('スプシ書き込み失敗', sink.error);
+  } catch (e) {
+    console.error('スプシ書き込み例外', e.message);
+  }
+
   console.log(`match完了 ${discordUserId}/${step} → ${matchStatus} (${matchConfidence})`);
 }

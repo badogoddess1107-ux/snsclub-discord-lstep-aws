@@ -25,6 +25,9 @@ export const CONFIG = {
   alertThreadId: process.env.DISCORD_ALERT_THREAD_ID,
   alertMentionId: process.env.DISCORD_ALERT_MENTION_ID,
   writebackToken: process.env.WRITEBACK_TOKEN,
+  // 旧GASスプシへの即時ミラー書き込み（受信専用GAS Web App）。未設定なら送信しない。
+  sheetSinkUrl: process.env.SHEET_SINK_URL || '',
+  sheetSinkToken: process.env.SHEET_SINK_TOKEN || '',
   // 40333対策（Discord IPブロック）：AWSのIPで直接叩けるなら未設定でOK。ブロック時はWorker経由
   proxyUrl: process.env.DISCORD_PROXY_URL || '',
   proxySecret: process.env.DISCORD_PROXY_SECRET || '',
