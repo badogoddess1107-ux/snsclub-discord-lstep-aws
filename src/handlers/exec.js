@@ -4,6 +4,7 @@ import { CONFIG, guildIdForStep, serverNameForStep } from '../lib/config.js';
 import { buildAuthorizeUrl, exchangeCodeForToken, fetchDiscordUser, joinGuild } from '../lib/discord.js';
 import { getMapping, putMapping } from '../lib/dynamo.js';
 import { completeHtml, errorHtml } from '../lib/html.js';
+import { logTap, markTapJoined } from '../lib/sink.js';
 
 const lambda = new LambdaClient({});
 
@@ -32,7 +33,21 @@ async function handleInitial(q) {
   if (step !== CONFIG.STEP_SNSCLUB && step !== CONFIG.STEP_CLASSCHAT && step !== CONFIG.STEP_CLASSCHAT3) {
     return html(200, errorHtml(`ステップ指定が不正です（step=${step}）`));
   }
-  const stateObj = { uid: q.uid || '', mid: q.mid || '', step, nonce: randomUUID(), ts: Date.now() };
+  const nonce = randomUUID();
+  // URLタップを記録（「タップしたが入室できない人」を可視化するため。nonceで後の入室と紐付け）。
+  // 失敗・タイムアウトしても入室はブロックしない（短タイムアウト）。
+  try {
+    await logTap({
+      nonce,
+      step,
+      server: serverNameForStep(step),
+      lstep_uid: q.uid || '',
+      lstep_manage_id: q.mid || '',
+      status: 'タップ・未入室',
+      tapped_at: new Date().toISOString(),
+    });
+  } catch (e) { console.error('タップ記録失敗', e.message); }
+  const stateObj = { uid: q.uid || '', mid: q.mid || '', step, nonce, ts: Date.now() };
   const state = Buffer.from(encodeURIComponent(JSON.stringify(stateObj))).toString('base64url');
   return redirect(buildAuthorizeUrl(state)); // API Gatewayはiframeされないので直接302でOK（GASより速い）
 }
@@ -45,7 +60,7 @@ async function handleCallback(q) {
   } catch {
     return html(200, errorHtml('認証情報が破損しています。再度Lステップのリンクからやり直してください。'));
   }
-  const { uid = '', mid = '', step } = state;
+  const { uid = '', mid = '', step, nonce = '' } = state;
 
   const tok = await exchangeCodeForToken(q.code);
   if (tok.error) { console.error('token', tok.error); return html(200, errorHtml('Discord認証に失敗しました。お手数ですが最初からやり直してください。')); }
@@ -80,6 +95,13 @@ async function handleCallback(q) {
     created_at: (existing && existing.created_at) || now,
     updated_at: now,
   });
+
+  // タップ追跡を「入室済み」に更新（nonceで紐付け。失敗しても本処理に影響させない）
+  if (nonce) {
+    try {
+      await markTapJoined({ nonce, discord_user_id: String(user.id), joined_at: now });
+    } catch (e) { console.error('タップ入室更新失敗', e.message); }
+  }
 
   // 即マッチを非同期起動（完了画面は待たせない＝GASの1分ポーリングを撤廃）
   if (CONFIG.matchFunctionName) {
