@@ -14,7 +14,7 @@
 // このスクリプトはパスワードを一切扱わない（ブラウザで人が入力するだけ）。
 import { chromium } from 'playwright';
 import { storageFromEnv, saveSession } from '../src/storage.js';
-import { ensureAccount, readHeaderText } from '../src/lstepFlow.js';
+import { ensureAccount, readHeaderText, isOnAccount } from '../src/lstepFlow.js';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -45,7 +45,20 @@ try {
   console.log('✅ ログインを検知しました。');
 
   // ログイン直後の既定アカウントが目的と違うことがある（勉強会 など）→ 目的のアカウントに切り替えてから保存
-  await ensureAccount(page, accountName, console.log);
+  try {
+    await ensureAccount(page, accountName, console.log);
+  } catch (e) {
+    // ログイン直後がアカウント選択画面などで自動で切り替えられない場合は、人に選んでもらう
+    console.log(`   自動で切り替えられませんでした（${e.message}）。現在のURL: ${page.url()}`);
+    console.log(`👉 開いているブラウザで「${accountName}」のアカウントを開いてください。最大10分待機します…`);
+    const deadline = Date.now() + 600000;
+    for (;;) {
+      await page.waitForTimeout(2000);
+      if (isOnAccount(await readHeaderText(page).catch(() => ''), accountName)) break;
+      if (Date.now() > deadline) throw new Error(`「${accountName}」が開かれませんでした`);
+    }
+    console.log(`   「${accountName}」を確認しました。`);
+  }
   console.log('   操作アカウント: ' + (await readHeaderText(page)).replace(/.*person /, ''));
 
   await saveSession(storage, await context.storageState());

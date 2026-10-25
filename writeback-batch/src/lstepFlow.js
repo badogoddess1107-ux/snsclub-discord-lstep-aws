@@ -33,40 +33,65 @@ export async function readHeaderText(page) {
 }
 
 /**
+ * ヘッダーのアカウントボタンの文字から、いま操作中のアカウント名を取り出す（純粋関数）。
+ * 例: "person 久保梨生 (副管理者) SnsClub運営 expand_more" → "SnsClub運営"
+ * （2026-10 の新しい管理画面。ボタンは「アイコン名 ユーザー名 (権限) アカウント名 アイコン名」）
+ */
+export function parseCurrentAccount(buttonText) {
+  const t = String(buttonText || '').replace(/\s+/g, ' ').trim().replace(/^person\s*/, '');
+  const m = /\)\s*(.+?)(?:\s+expand_more|$)/.exec(t); // 「(副管理者)」などの権限表示の後ろがアカウント名
+  return m ? m[1].trim() : '';
+}
+
+/**
  * ヘッダーのテキストから「今このアカウントで操作しているか」を判定する（純粋関数）。
- * ドロップダウンを開くと他アカウントが「<名前>に切り替え」として並ぶため、
- * 「名前を含む」だけでは誤判定する。切替項目としての出現は除外する。
+ * アカウント名が完全一致するかで判定する（「【SnsClub運営】ビギナー・ライト」は「SnsClub運営」ではない）。
  */
 export function isOnAccount(headerText, accountName) {
   if (!accountName) return true;
   const t = String(headerText || '');
+  const current = parseCurrentAccount(t.includes('person') ? t.slice(t.lastIndexOf('person')) : t);
+  if (current) return current === accountName;
+  // 旧画面（アカウント名を取り出せない）: 「<名前>に切り替え」項目としての出現は除外して含むかで判定
   const withoutSwitchItems = t.split(accountName + 'に切り替え').join('');
   return withoutSwitchItems.includes(accountName);
+}
+
+/** ヘッダー右端のアカウントボタン */
+function accountButton(page) {
+  return page.locator('header button', { hasText: 'person' }).last();
 }
 
 /**
  * 目的のLステップアカウントで操作していることを保証する。
  * 1ユーザーが複数アカウント（SnsClub運営 / 勉強会 など）を持つため、ログイン直後の
- * 既定アカウントが目的と違うことがある。違えばヘッダーの「<名前>に切り替え」で切り替える。
+ * 既定アカウントが目的と違うことがある。違えばアカウントメニューの「<名前>に切り替え」で切り替える。
  * 戻り値: { switched: boolean }。切り替えられなければ throw。
  */
 export async function ensureAccount(page, accountName, log = () => {}) {
   if (!accountName) return { switched: false };
+  // 画面の読み込み途中に判定すると誤判定するため、アカウントボタンが出るまで待つ（旧画面には無いので待ちすぎない）
+  await accountButton(page).waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
   if (isOnAccount(await readHeaderText(page), accountName)) {
     log(`   アカウント確認OK: ${accountName}`);
     return { switched: false };
   }
-  log(`   別アカウントで開いています → 「${accountName}」に切り替えます`);
-  // ヘッダー右端のアカウントメニュー（expand_more アイコン）を開く
-  await page.locator('header, nav, .navbar').first().getByText('expand_more').last().click().catch(() => {});
+  log(`   別アカウント（${parseCurrentAccount(await accountButton(page).innerText().catch(() => '')) || '不明'}）で開いています → 「${accountName}」に切り替えます`);
+  await accountButton(page).click().catch(() => {});
   await page.waitForTimeout(500);
-  const item = page.getByText(accountName + 'に切り替え', { exact: false }).first();
+  let item = page.getByRole('menuitem', { name: accountName + 'に切り替え', exact: true }).first();
+  if (!(await item.count())) {
+    // 旧画面のメニュー
+    await page.locator('header, nav, .navbar').first().getByText('expand_more').last().click().catch(() => {});
+    await page.waitForTimeout(500);
+    item = page.getByText(accountName + 'に切り替え', { exact: true }).first();
+  }
   if (!(await item.count())) {
     throw new Error(`アカウント「${accountName}」に切り替えられません（メニューに見つからない）。ログインユーザーの権限を確認してください`);
   }
   await item.click();
   await page.waitForLoadState('networkidle').catch(() => {});
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1500);
   if (!isOnAccount(await readHeaderText(page), accountName)) {
     throw new Error(`アカウント「${accountName}」への切り替えに失敗しました`);
   }

@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isOnAccount, fetchMap } from '../src/lstepFlow.js';
+import { isOnAccount, parseCurrentAccount, fetchMap } from '../src/lstepFlow.js';
 
 test('isOnAccount: ヘッダーに目的アカウントが表示されていれば true', () => {
   const header = 'サポート expand_more 送信数 person 久保梨生 (副管理者) SnsClub運営 expand_more';
@@ -31,4 +31,17 @@ test('fetchMap: file:// でローカルのマッピングを読める（検証�
   const p = path.join(dir, 'map.csv');
   fs.writeFileSync(p, 'lstep_manage_id,discord_user_id\n1,10\n');
   assert.deepStrictEqual(await fetchMap('file://' + p), { 1: '10' });
+});
+
+test('parseCurrentAccount: 新しい画面のアカウントボタンから操作中アカウント名を取り出す', () => {
+  assert.strictEqual(parseCurrentAccount('person 久保梨生 (副管理者) SnsClub運営 expand_more'), 'SnsClub運営');
+  assert.strictEqual(parseCurrentAccount('person 田中春奈 (運用者) SnsClub運営'), 'SnsClub運営');
+  assert.strictEqual(parseCurrentAccount('person 久保梨生 (副管理者) 【SnsClub運営】ビギナー・ライト expand_more'), '【SnsClub運営】ビギナー・ライト');
+});
+
+test('isOnAccount: 新しい画面では完全一致（名前を含む別アカウントを取り違えない）', () => {
+  const header = 'keyboard_double_arrow_left help サポート expand_more equalizer 送信数 person 久保梨生 (副管理者) 【SnsClub運営】ビギナー・ライト expand_more';
+  assert.strictEqual(isOnAccount(header, 'SnsClub運営'), false);
+  const ok = 'keyboard_double_arrow_left help サポート expand_more equalizer 送信数 person 久保梨生 (副管理者) SnsClub運営 expand_more';
+  assert.strictEqual(isOnAccount(ok, 'SnsClub運営'), true);
 });
