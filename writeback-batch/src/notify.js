@@ -30,6 +30,24 @@ export function buildMessage(kind, detail = {}) {
         `エラー: ${String(detail.error || '').slice(0, 500)}`,
         detail.bucket ? `スクリーンショット: ${detail.bucket}/runs/${detail.runId}/` : '',
       ].filter(Boolean).join('\n');
+    case 'sender_needs_login':
+      return [
+        mention,
+        '⚠️ 1on1のLINE送信（AWS）: Lステップのログインセッションが切れているため送信できません。',
+        `未送信: ${detail.count}件（ログインし直すと5分以内に自動で送ります）`,
+        '担当者は手元のPCで下記を実行し、ブラウザで画像認証を解いてログインしてください。',
+        '```',
+        'cd aws-discord-lstep/writeback-batch && npm run session:login',
+        '```',
+      ].filter(Boolean).join('\n');
+    case 'sender_error':
+      return [
+        mention,
+        '❌ 1on1のLINE送信（AWS）でエラーが発生しました。',
+        `実行ID: ${detail.runId}`,
+        `エラー: ${String(detail.error || '').slice(0, 500)}`,
+        detail.bucket ? `スクリーンショット: ${detail.bucket}/sender/${detail.runId}/` : '',
+      ].filter(Boolean).join('\n');
     default:
       return `DiscordID書き戻し（AWS）: ${kind}`;
   }
